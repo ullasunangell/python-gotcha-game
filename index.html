@@ -1,0 +1,998 @@
+<div style="background:#0b1120; min-height:100%; padding: 4px 0;">
+<div id="app" style="font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 0 auto; padding: 20px 16px; color: #e2e8f0;"></div>
+</div>
+
+<script>
+const QUESTIONS = [
+  { topic: "Mutable Defaults", code: `def add(item, lst=[]):
+    lst.append(item)
+    return lst
+
+print(add("a"))
+print(add("b"))`, answer: "['a']\n['a', 'b']", explain: "The default list is created once, at function definition — every call that skips the argument shares and mutates the same list." },
+  { topic: "Mutable Defaults", code: `def track(x, seen={}):
+    seen[x] = seen.get(x, 0) + 1
+    return seen
+
+print(track("a"))
+print(track("b"))
+print(track("a"))`, answer: "{'a': 1}\n{'a': 1, 'b': 1}\n{'a': 2, 'b': 1}", explain: "Same trap with a dict default — one shared dict, growing across every call." },
+  { topic: "Mutable Defaults", code: `class Cart:
+    items = []
+    def __init__(self, owner):
+        self.owner = owner
+
+c1 = Cart("A")
+c2 = Cart("B")
+c1.items.append("x")
+print(c2.items)`, answer: "['x']", explain: "items = [] is a class attribute, shared by every instance — c1 and c2 point at the same list." },
+  { topic: "is vs ==", code: `a = [1, 2, 3]
+b = [1, 2, 3]
+c = a
+print(a == b)
+print(a is b)
+print(a is c)`, answer: "True\nFalse\nTrue", explain: "== compares contents. is compares identity (same object in memory). c=a is an alias; b is a separate object with matching contents." },
+  { topic: "is vs ==", code: `x = "hello"
+y = "hello"
+print(x == y)
+print(x is y)`, answer: "True\nTrue", explain: "Small strings are often 'interned' (cached/reused) by Python, so identity can match too — a common surprise." },
+  { topic: "is vs ==", code: `d1 = {"a": 1}
+d2 = {"a": 1}
+print(d1 == d2)
+print(d1 is d2)`, answer: "True\nFalse", explain: "Same contents (True for ==), but two separate dict objects (False for is)." },
+  { topic: "Shallow/Deep Copy", code: `import copy
+original = [[1, 2], [3, 4]]
+shallow = copy.copy(original)
+deep = copy.deepcopy(original)
+original[0][0] = 99
+print(shallow)
+print(deep)`, answer: "[[99, 2], [3, 4]]\n[[1, 2], [3, 4]]", explain: "Shallow copy shares inner lists with the original; deep copy is fully independent at every level." },
+  { topic: "Shallow/Deep Copy", code: `import copy
+original = [[10, 20], [30, 40]]
+shallow = copy.copy(original)
+original[1][0] = 77
+print(shallow)`, answer: "[[10, 20], [77, 40]]", explain: "Shallow copy's outer list is new, but inner lists are shared — the mutation to original[1] shows up in shallow too." },
+  { topic: "Shallow/Deep Copy", code: `a = [1, 2, 3]
+b = a.copy()
+b.append(4)
+print(a)
+print(b)`, answer: "[1, 2, 3]\n[1, 2, 3, 4]", explain: ".copy() on a flat (non-nested) list makes a fully independent copy — mutating b never touches a." },
+  { topic: "Generators", code: `def gen():
+    yield 1
+    yield 2
+    yield 3
+
+g = gen()
+print(list(g))
+print(list(g))`, answer: "[1, 2, 3]\n[]", explain: "A generator can only be consumed once — the second list(g) finds it already exhausted." },
+  { topic: "Generators", code: `def gen():
+    yield "a"
+    yield "b"
+
+g = gen()
+first = next(g)
+print(first)
+print(list(g))`, answer: "a\n['b']", explain: "next() pulls one raw value (no brackets). list() collects whatever remains into a list." },
+  { topic: "Generators", code: `def gen():
+    yield 10
+    yield 20
+    yield 30
+
+g = gen()
+x = next(g)
+y = next(g)
+print(x, y)
+print(list(g))`, answer: "10 20\n[30]", explain: "next() always returns the next unclaimed value in order, top to bottom." },
+  { topic: "Closures", code: `funcs = []
+for i in range(3):
+    funcs.append(lambda: i)
+
+print([f() for f in funcs])`, answer: "[2, 2, 2]", explain: "Lambdas look up i's current value when called, not when created. By the time they're called, the loop has finished and i is 2." },
+  { topic: "Closures", code: `funcs = []
+for i in range(3):
+    funcs.append(lambda i=i: i)
+
+print([f() for f in funcs])`, answer: "[0, 1, 2]", explain: "Using i=i as a default argument captures the value at creation time, fixing the late-binding trap." },
+  { topic: "Slicing", code: `s = "Python"
+print(s[1:4])
+print(s[-3:])
+print(s[::-1])`, answer: "yth\nhon\nnohtyP", explain: "Slice stop is exclusive. Negative indices count from the end. Step -1 reverses the string." },
+  { topic: "Slicing", code: `s = "Outlier"
+print(s[2:5])
+print(s[:3])
+print(s[-4:-1])`, answer: "tli\nOut\nlie", explain: "s[2:5] gives indices 2,3,4. s[:3] gives the first 3 chars. Negative-to-negative slicing counts from the end the same way." },
+  { topic: "Comprehensions", code: `nums = [1, 2, 3, 4, 5, 6]
+result = [n * 2 for n in nums if n % 2 == 0]
+print(result)`, answer: "[4, 8, 12]", explain: "The if after for filters which items are included; only even numbers pass through, then get doubled." },
+  { topic: "Comprehensions", code: `nums = [1, 2, 3, 4]
+result = ["big" if n > 2 else "small" for n in nums]
+print(result)`, answer: "['small', 'small', 'big', 'big']", explain: "if/else before the for transforms every item — nothing is filtered out, unlike if after for." },
+  { topic: "Comprehensions", code: `nums = [1, 2, 3, 4]
+squares = {n: n**2 for n in nums}
+print(squares)`, answer: "{1: 1, 2: 4, 3: 9, 4: 16}", explain: "Dict comprehensions use curly braces and key:value syntax. ** means exponent, not multiplication." },
+  { topic: "Comprehensions", code: `words = ["cat", "dog", "elephant"]
+lengths = {w: len(w) for w in words}
+print(lengths)`, answer: "{'cat': 3, 'dog': 3, 'elephant': 8}", explain: "The key is the actual word (not the literal letter w), the value is its length." },
+  { topic: "OOP Basics", code: `class Cat:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return f"{self.name} says meow"
+
+c = Cat("Whiskers")
+print(c.speak())`, answer: "Whiskers says meow", explain: "__init__ stores the passed-in value exactly as given; self.name is per-instance." },
+  { topic: "OOP Basics", code: `class Animal:
+    def speak(self):
+        return "..."
+
+class Dog(Animal):
+    def speak(self):
+        return "Woof"
+
+d = Dog()
+print(d.speak())`, answer: "Woof", explain: "Dog overrides Animal's speak method — the subclass's own version takes priority." },
+  { topic: "OOP Basics", code: `class Animal:
+    def __init__(self, name):
+        self.name = name
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        super().__init__(name)
+        self.breed = breed
+
+d = Dog("Rex", "Lab")
+print(d.name, d.breed)`, answer: "Rex Lab", explain: "super().__init__(name) calls the parent's constructor to set self.name, then the child adds its own attribute." },
+  { topic: "Strings & Casting", code: `x = "5"
+y = 3
+print(x + str(y))
+print(int(x) + y)`, answer: "53\n8", explain: "String concatenation joins text ('5' + '3' = '53'). int(x) converts to a number first, enabling real addition." },
+  { topic: "Strings & Casting", code: `print("apple".upper())
+print("APPLE".lower())
+print("apple pie".title())`, answer: "APPLE\napple\nApple Pie", explain: "upper/lower affect every character; title() capitalizes the first letter of each word." },
+  { topic: "Try/Except", code: `try:
+    x = 10 / 0
+except ZeroDivisionError:
+    print("caught it")
+print("done")`, answer: "caught it\ndone", explain: "The specific exception is caught, the program continues normally afterward — it doesn't crash." },
+  { topic: "Try/Except", code: `try:
+    x = int("abc")
+except ValueError:
+    print("bad value")
+finally:
+    print("cleanup")`, answer: "bad value\ncleanup", explain: "finally always runs, whether or not an exception was caught." },
+
+  // Basics & Variables
+  { topic: "Basics & Variables", code: `x = 5
+y = x
+x = 10
+print(x, y)`, answer: "10 5", explain: "Numbers are immutable — reassigning x doesn't change y, since y got a copy of the value 5, not a link to x." },
+  { topic: "Basics & Variables", code: `a, b = 1, 2
+a, b = b, a
+print(a, b)`, answer: "2 1", explain: "Python evaluates the right side fully before assigning — this is the standard swap idiom, no temp variable needed." },
+  { topic: "Basics & Variables", code: `x = 7
+print(type(x))
+y = "7"
+print(type(y))`, answer: "<class 'int'>\n<class 'str'>", explain: "type() shows the object's class. Quotes make it a string even though it looks numeric." },
+
+  // Data Types, Numbers, Casting
+  { topic: "Data Types & Casting", code: `print(int(3.9))
+print(round(3.9))
+print(float(5))`, answer: "3\n4\n5.0", explain: "int() truncates toward zero (drops the decimal, doesn't round). round() rounds to nearest. float() adds .0." },
+  { topic: "Data Types & Casting", code: `print(10 // 3)
+print(10 % 3)
+print(10 / 3)`, answer: "3\n1\n3.3333333333333335", explain: "// is floor (integer) division. % is remainder (modulo). / is true division, always returns a float." },
+  { topic: "Data Types & Casting", code: `print(bool(0))
+print(bool(""))
+print(bool("False"))
+print(bool([]))`, answer: "False\nFalse\nTrue\nFalse", explain: "0, empty string, and empty list are all falsy. Any non-empty string — even the text \"False\" — is truthy." },
+
+  // Booleans & Operators
+  { topic: "Booleans & Operators", code: `print(True and False)
+print(True or False)
+print(not True)`, answer: "False\nTrue\nFalse", explain: "Standard boolean logic — and requires both True, or requires at least one True, not flips it." },
+  { topic: "Booleans & Operators", code: `x = 5
+print(x > 2 and x < 10)
+print(2 < x < 10)`, answer: "True\nTrue", explain: "Python allows chained comparisons — 2 < x < 10 is shorthand for x > 2 and x < 10, same result." },
+  { topic: "Booleans & Operators", code: `print(2 + 3 * 4)
+print((2 + 3) * 4)
+print(2 ** 3 ** 2)`, answer: "14\n20\n512", explain: "Operator precedence: * before +. Parens override order. ** is right-associative: 3**2=9 first, then 2**9=512." },
+
+  // Lists & Tuples
+  { topic: "Lists & Tuples", code: `t = (1, 2, 3)
+try:
+    t[0] = 99
+except TypeError:
+    print("can't modify tuple")`, answer: "can't modify tuple", explain: "Tuples are immutable — you can't change an element after creation, unlike lists." },
+  { topic: "Lists & Tuples", code: `lst = [3, 1, 4, 1, 5]
+lst.sort()
+print(lst)
+lst.append(9)
+print(lst)`, answer: "[1, 1, 3, 4, 5]\n[1, 1, 3, 4, 5, 9]", explain: ".sort() sorts in place (modifies the original list, returns None). .append() adds one item to the end." },
+  { topic: "Lists & Tuples", code: `a = [1, 2, 3]
+b = [4, 5]
+print(a + b)
+print(a * 2)`, answer: "[1, 2, 3, 4, 5]\n[1, 2, 3, 1, 2, 3]", explain: "+ concatenates two lists. * repeats the list that many times — neither does element-wise math like arrays in other languages." },
+
+  // Sets & Dictionaries
+  { topic: "Sets & Dictionaries", code: `s = {1, 2, 2, 3, 3, 3}
+print(s)
+print(len(s))`, answer: "{1, 2, 3}\n3", explain: "Sets automatically drop duplicates and have no guaranteed order." },
+  { topic: "Sets & Dictionaries", code: `d = {"a": 1, "b": 2}
+print(d.get("c", "not found"))
+print(d.get("a"))
+d["c"] = 3
+print(d)`, answer: "not found\n1\n{'a': 1, 'b': 2, 'c': 3}", explain: ".get() returns a default instead of erroring on a missing key. Assigning a new key adds it to the dict." },
+  { topic: "Sets & Dictionaries", code: `a = {1, 2, 3}
+b = {2, 3, 4}
+print(a & b)
+print(a | b)
+print(a - b)`, answer: "{2, 3}\n{1, 2, 3, 4}\n{1}", explain: "& is intersection (in both), | is union (in either), - is difference (in a but not b)." },
+
+  // Control Flow
+  { topic: "Control Flow", code: `x = 5
+if x > 10:
+    print("big")
+elif x > 3:
+    print("medium")
+else:
+    print("small")`, answer: "medium", explain: "Python checks conditions top to bottom and stops at the first True — x > 10 is False, x > 3 is True, so \"medium\" runs and elif/else after it are skipped." },
+  { topic: "Control Flow", code: `for i in range(5):
+    if i == 3:
+        break
+    print(i)`, answer: "0\n1\n2", explain: "break exits the loop immediately once i == 3, so 3 and 4 never print." },
+  { topic: "Control Flow", code: `for i in range(5):
+    if i % 2 == 0:
+        continue
+    print(i)`, answer: "1\n3", explain: "continue skips the rest of that iteration and jumps to the next one — even numbers never reach print()." },
+  { topic: "Control Flow", code: `i = 0
+while i < 3:
+    print(i)
+    i += 1`, answer: "0\n1\n2", explain: "while loops run as long as the condition is True — i must be manually incremented or it loops forever." },
+
+  // Functions & Range
+  { topic: "Functions & Range", code: `def greet(name, greeting="Hello"):
+    return f"{greeting}, {name}!"
+
+print(greet("Sully"))
+print(greet("Sully", "Hey"))`, answer: "Hello, Sully!\nHey, Sully!", explain: "Default arguments are used when the caller doesn't provide that argument, but can be overridden." },
+  { topic: "Functions & Range", code: `def total(*args):
+    return sum(args)
+
+print(total(1, 2, 3))
+print(total(10, 20))`, answer: "6\n30", explain: "*args collects any number of positional arguments into a tuple, so the function works with any argument count." },
+  { topic: "Functions & Range", code: `print(list(range(5)))
+print(list(range(2, 8)))
+print(list(range(0, 10, 2)))`, answer: "[0, 1, 2, 3, 4]\n[2, 3, 4, 5, 6, 7]\n[0, 2, 4, 6, 8]", explain: "range(stop) starts at 0. range(start, stop) is exclusive of stop. Third argument is the step." },
+
+  // Iterators & Arrays
+  { topic: "Iterators & Modules", code: `nums = [1, 2, 3]
+it = iter(nums)
+print(next(it))
+print(next(it))
+print(list(nums))`, answer: "1\n2\n[1, 2, 3]", explain: "iter() creates an iterator from a list — pulling from it doesn't consume the original list, only the iterator." },
+  { topic: "Iterators & Modules", code: `import math
+print(math.sqrt(16))
+print(math.floor(4.7))
+print(math.ceil(4.2))`, answer: "4.0\n4\n5", explain: "math.sqrt always returns a float. floor rounds down, ceil rounds up, both to the nearest int." },
+  { topic: "Iterators & Modules", code: `import json
+data = {"name": "Sully", "age": 25}
+s = json.dumps(data)
+print(s)
+print(type(s))`, answer: "{\"name\": \"Sully\", \"age\": 25}\n<class 'str'>", explain: "json.dumps() converts a Python dict into a JSON-formatted string — note it uses double quotes, and the result type is str, not dict." },
+
+  // String Formatting
+  { topic: "String Formatting", code: `name = "Sully"
+score = 92.5
+print(f"{name} scored {score}%")
+print(f"{score:.1f}")`, answer: "Sully scored 92.5%\n92.5", explain: "f-strings insert variables directly. :.1f formats a float to 1 decimal place." },
+  { topic: "String Formatting", code: `print("{} is {} years old".format("Sully", 25))
+print("%s scored %d" % ("Sully", 90))`, answer: "Sully is 25 years old\nSully scored 90", explain: ".format() and %-formatting are older styles — both still valid, f-strings are just the modern preferred way." },
+
+  // None & User Input
+  { topic: "None & Regex", code: `x = None
+print(x == None)
+print(x is None)
+print(type(x))`, answer: "True\nTrue\n<class 'NoneType'>", explain: "is None is the preferred check (identity-based, faster and more explicit), but == None also works here." },
+  { topic: "None & Regex", code: `import re
+match = re.search(r"\\d+", "order 42 confirmed")
+print(match.group())`, answer: "42", explain: "\\d+ matches one or more digits. re.search finds the first match anywhere in the string; .group() returns the matched text." },
+
+  // Deeper OOP
+  { topic: "OOP Deep Dive", code: `class Shape:
+    def area(self):
+        return 0
+
+class Square(Shape):
+    def __init__(self, side):
+        self.side = side
+    def area(self):
+        return self.side ** 2
+
+shapes = [Square(2), Square(3)]
+for s in shapes:
+    print(s.area())`, answer: "4\n9", explain: "Polymorphism — each object calls its own area() method even though they're accessed through the same shapes list and Shape-style interface." },
+  { topic: "OOP Deep Dive", code: `class Account:
+    def __init__(self, balance):
+        self._balance = balance
+
+    def deposit(self, amount):
+        self._balance += amount
+        return self._balance
+
+a = Account(100)
+print(a.deposit(50))
+print(a._balance)`, answer: "150\n150", explain: "The underscore prefix is a convention signaling 'internal use' (encapsulation) — Python doesn't truly enforce privacy, it's still accessible directly." },
+  { topic: "OOP Deep Dive", code: `class Counter:
+    count = 0
+    def __init__(self):
+        Counter.count += 1
+
+a = Counter()
+b = Counter()
+c = Counter()
+print(Counter.count)`, answer: "3", explain: "count is a class attribute shared by all instances — incrementing it via Counter.count affects the single shared value, tracking how many instances were made." },
+  { topic: "OOP Deep Dive", code: `class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+
+    @property
+    def area(self):
+        return 3.14159 * self.radius ** 2
+
+c = Circle(2)
+print(c.area)`, answer: "12.56636", explain: "@property lets you call area like an attribute (c.area, no parentheses) even though it's computed by a method — common for read-only derived values." },
+  { topic: "OOP Deep Dive", code: `class Dog:
+    @classmethod
+    def create_puppy(cls):
+        return cls("Puppy")
+
+    def __init__(self, name):
+        self.name = name
+
+d = Dog.create_puppy()
+print(d.name)`, answer: "Puppy", explain: "@classmethod receives the class itself (cls) instead of an instance — often used as an alternative constructor, called on the class directly." },
+  { topic: "OOP Deep Dive", code: `class Car:
+    class Engine:
+        def start(self):
+            return "Engine started"
+
+    def __init__(self):
+        self.engine = self.Engine()
+
+c = Car()
+print(c.engine.start())`, answer: "Engine started", explain: "An inner class (defined inside another class) is just a class scoped as an attribute — accessed via self.Engine() or Car.Engine, useful for tightly-coupled helper classes." },
+
+  // Match statement & dates
+  { topic: "Match & Dates", code: `status = 404
+
+match status:
+    case 200:
+        print("OK")
+    case 404:
+        print("Not Found")
+    case _:
+        print("Unknown")`, answer: "Not Found", explain: "match/case (Python 3.10+) compares status against each case in order; _ is the wildcard/default, like else." },
+  { topic: "Match & Dates", difficulty: "medium", code: `from datetime import date
+
+d = date(2026, 8, 7)
+print(d.year)
+print(d.strftime("%d/%m/%Y"))`, answer: "2026\n07/08/2026", explain: "date objects store year/month/day as attributes. strftime formats it into a string using format codes (%d day, %m month, %Y 4-digit year)." },
+
+  // --- Extra reps, tagged by difficulty, to build toward 20/topic ---
+
+  // Mutable Defaults (extra)
+  { topic: "Mutable Defaults", difficulty: "easy", code: `def f(x=5):
+    return x + 1
+
+print(f())
+print(f(10))`, answer: "6\n11", explain: "An immutable default (an int) is totally safe — this isn't a trap, it's here to contrast with mutable defaults. No sharing happens because ints can't be mutated in place." },
+  { topic: "Mutable Defaults", difficulty: "hard", code: `def outer(cache={}):
+    def inner(key, val):
+        cache[key] = val
+        return cache
+    return inner
+
+f1 = outer()
+f2 = outer()
+f1("a", 1)
+f2("b", 2)
+print(f1("c", 3))`, answer: "{'a': 1, 'b': 2, 'c': 3}", explain: "cache={} is created once, shared across every call to outer() that skips the argument — so f1 and f2's inner functions are secretly writing to the exact same dict." },
+
+  // is vs == (extra)
+  { topic: "is vs ==", difficulty: "easy", code: `x = 100
+y = 100
+print(x == y)
+print(x is y)`, answer: "True\nTrue", explain: "Small integers (-5 to 256) are cached by Python, so is often returns True for them too — another 'looks weird but is normal' case, like small string interning." },
+  { topic: "is vs ==", difficulty: "hard", code: `x = 1000
+y = 1000
+print(x == y)
+print(x is y)`, answer: "True\nFalse", explain: "Unlike small ints, larger numbers aren't cached — two separate 1000 objects are created, so is returns False even though the values match." },
+
+  // Shallow/Deep Copy (extra)
+  { topic: "Shallow/Deep Copy", difficulty: "easy", code: `a = (1, 2, 3)
+b = a
+print(a is b)`, answer: "True", explain: "Tuples are immutable, and simple assignment never copies — b is just another name for the same object as a, same as with lists." },
+  { topic: "Shallow/Deep Copy", difficulty: "hard", code: `import copy
+data = {"nums": [1, 2, 3]}
+shallow = copy.copy(data)
+data["nums"].append(4)
+print(shallow)`, answer: "{'nums': [1, 2, 3, 4]}", explain: "Same shallow-copy trap as with lists, but with a dict — the outer dict is copied, but the inner list value is shared, so mutating it shows up in both." },
+
+  // Generators (extra)
+  { topic: "Generators", difficulty: "easy", code: `def gen():
+    yield 1
+    yield 2
+
+g = gen()
+for val in g:
+    print(val)`, answer: "1\n2", explain: "A for loop over a generator pulls values automatically until it's exhausted — no manual next() needed." },
+  { topic: "Generators", difficulty: "hard", code: `def gen():
+    for i in range(3):
+        x = yield i
+        print("received:", x)
+
+g = gen()
+print(next(g))
+print(g.send("hi"))`, answer: "0\nreceived: hi\n1", explain: "send() resumes the generator, passing a value INTO the paused yield expression, then runs until the next yield — advanced but occasionally tested at 'expert' level." },
+
+  // Closures (extra)
+  { topic: "Closures", difficulty: "easy", code: `def make_adder(n):
+    def add(x):
+        return x + n
+    return add
+
+add5 = make_adder(5)
+print(add5(3))`, answer: "8", explain: "add5 'closes over' n=5 from when it was created — this is a normal, correct closure, not the late-binding trap (n never changes after creation here)." },
+  { topic: "Closures", difficulty: "hard", code: `def make_multipliers():
+    return [lambda x: x * i for i in range(1, 4)]
+
+fns = make_multipliers()
+print([f(10) for f in fns])`, answer: "[30, 30, 30]", explain: "Same late-binding trap as the loop-lambda classic — all three lambdas share the same i, which is 3 by the time they're called, so every result is 10*3." },
+
+  // Slicing (extra)
+  { topic: "Slicing", difficulty: "easy", code: `lst = [10, 20, 30, 40, 50]
+print(lst[1:3])
+print(lst[:2])
+print(lst[3:])`, answer: "[20, 30]\n[10, 20]\n[40, 50]", explain: "Same exclusive-stop rule as string slicing, just on a list — lst[1:3] gives indices 1 and 2 only." },
+  { topic: "Slicing", difficulty: "hard", code: `lst = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+print(lst[2:9:2])
+print(lst[::3])`, answer: "[2, 4, 6, 8]\n[0, 3, 6, 9]", explain: "Third slice value is the step. lst[2:9:2] takes every 2nd element from index 2 up to (not including) 9. lst[::3] takes every 3rd element across the whole list." },
+
+  // Comprehensions (extra)
+  { topic: "Comprehensions", difficulty: "easy", code: `nums = [1, 2, 3]
+result = [str(n) for n in nums]
+print(result)`, answer: "['1', '2', '3']", explain: "The expression before 'for' can be any transformation — here casting each number to a string." },
+  { topic: "Comprehensions", difficulty: "hard", code: `matrix = [[1, 2], [3, 4], [5, 6]]
+flat = [n for row in matrix for n in row]
+print(flat)`, answer: "[1, 2, 3, 4, 5, 6]", explain: "Nested comprehension — two for clauses. Read left to right: for each row in matrix, for each n in that row, include n. This flattens a 2D list into 1D." },
+
+  // OOP Basics (extra)
+  { topic: "OOP Basics", difficulty: "easy", code: `class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+p = Point(3, 4)
+print(p.x, p.y)`, answer: "3 4", explain: "Two separate instance attributes, both set in __init__, both accessible via dot notation." },
+  { topic: "OOP Basics", difficulty: "hard", code: `class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __repr__(self):
+        return f"Point({self.x}, {self.y})"
+
+p = Point(3, 4)
+print(p)
+print([p])`, answer: "Point(3, 4)\n[Point(3, 4)]", explain: "__repr__ controls how an object displays when printed directly, or shown inside a container like a list — without it you'd see a generic memory address instead." },
+
+  // Strings & Casting (extra)
+  { topic: "Strings & Casting", difficulty: "easy", code: `print(len("hello"))
+print("hello"[0])
+print("hello" + " world")`, answer: "5\nh\nhello world", explain: "len() counts characters, indexing pulls a single character, + concatenates two strings." },
+  { topic: "Strings & Casting", difficulty: "hard", code: `print("  hello  ".strip())
+print("a,b,,c".split(","))
+print("-".join(["x", "y", "z"]))`, answer: "hello\n['a', 'b', '', 'c']\nx-y-z", explain: "strip() removes leading/trailing whitespace only. split() keeps empty strings for consecutive delimiters. join() glues a list into one string with the separator between items." },
+
+  // Try/Except (extra)
+  { topic: "Try/Except", difficulty: "easy", code: `try:
+    print(1 / 1)
+except ZeroDivisionError:
+    print("error")
+else:
+    print("no error")`, answer: "1.0\nno error", explain: "else in a try block runs only if NO exception occurred — since there was no error here, both the try body and the else block run." },
+  { topic: "Try/Except", difficulty: "hard", code: `def risky():
+    try:
+        return 1
+    finally:
+        print("cleanup")
+
+print(risky())`, answer: "cleanup\n1", explain: "finally runs even when there's a return in the try block — it executes before the function actually hands back the value, which is why 'cleanup' prints first." },
+
+  // Basics & Variables (extra)
+  { topic: "Basics & Variables", difficulty: "easy", code: `# This is a comment
+x = 10  # inline comment
+print(x)`, answer: "10", explain: "Comments (starting with #) are ignored entirely by Python — they never affect output, only the code itself runs." },
+  { topic: "Basics & Variables", difficulty: "hard", code: `def f():
+    x = 5
+    def g():
+        nonlocal x
+        x = 10
+    g()
+    return x
+
+print(f())`, answer: "10", explain: "nonlocal lets an inner function modify a variable from its enclosing (not global) scope — without it, g() would create its own separate local x instead of changing f's x." },
+
+  // Data Types & Casting (extra)
+  { topic: "Data Types & Casting", difficulty: "easy", code: `print(type(5))
+print(type(5.0))
+print(type("5"))
+print(type([5]))`, answer: "<class 'int'>\n<class 'float'>\n<class 'str'>\n<class 'list'>", explain: "type() reveals the exact class — note 5 and 5.0 are different types (int vs float) even though they look numerically equal." },
+  { topic: "Data Types & Casting", difficulty: "hard", code: `print(int("10", 2))
+print(int("FF", 16))`, answer: "2\n255", explain: "int(string, base) parses the string in that base. \"10\" in base 2 (binary) is 2 in decimal. \"FF\" in base 16 (hex) is 255." },
+
+  // Booleans & Operators (extra)
+  { topic: "Booleans & Operators", difficulty: "easy", code: `print(5 == 5)
+print(5 != 4)
+print(5 >= 5)`, answer: "True\nTrue\nTrue", explain: "Standard comparison operators, all straightforward here." },
+  { topic: "Booleans & Operators", difficulty: "hard", code: `print(0 and "a")
+print(1 and "a")
+print(0 or "a")
+print("" or [])`, answer: "0\na\na\n[]", explain: "and/or don't always return True/False — they return the actual value that decided the result. and returns the first falsy value (or the last if all truthy); or returns the first truthy value (or the last if all falsy)." },
+
+  // Lists & Tuples (extra)
+  { topic: "Lists & Tuples", difficulty: "easy", code: `t = (1, 2, 3)
+print(t[0])
+print(len(t))
+a, b, c = t
+print(b)`, answer: "1\n3\n2", explain: "Tuples support indexing and unpacking just like lists — a, b, c = t assigns each element to a separate variable in order." },
+  { topic: "Lists & Tuples", difficulty: "hard", code: `lst = [1, 2, 3]
+lst2 = lst
+lst.extend([4, 5])
+print(lst2)
+print(lst is lst2)`, answer: "[1, 2, 3, 4, 5]\nTrue", explain: "lst2 = lst is an alias, not a copy. extend() mutates the list in place, so lst2 sees the change too — same shared-reference pattern as everywhere else in this list." },
+
+  // Sets & Dictionaries (extra)
+  { topic: "Sets & Dictionaries", difficulty: "easy", code: `d = {"a": 1, "b": 2}
+print(list(d.keys()))
+print(list(d.values()))`, answer: "['a', 'b']\n[1, 2]", explain: ".keys() and .values() give views of the dict's keys and values, in insertion order (Python 3.7+ dicts preserve insertion order)." },
+  { topic: "Sets & Dictionaries", difficulty: "hard", code: `d = {"a": 1, "b": 2}
+for k, v in d.items():
+    print(k, v)
+print("a" in d)
+print(1 in d)`, answer: "a 1\nb 2\nTrue\nFalse", explain: ".items() unpacks key-value pairs together. 'in' on a dict checks KEYS by default, not values — that's why 1 in d is False even though 1 is a value." },
+
+  // Control Flow (extra)
+  { topic: "Control Flow", difficulty: "easy", code: `for i in range(3):
+    for j in range(2):
+        print(i, j)`, answer: "0 0\n0 1\n1 0\n1 1\n2 0\n2 1", explain: "Nested loops — the inner loop runs completely for every single iteration of the outer loop." },
+  { topic: "Control Flow", difficulty: "hard", code: `for i in range(5):
+    if i == 2:
+        continue
+    if i == 4:
+        break
+    print(i)
+else:
+    print("done")`, answer: "0\n1\n3", explain: "The loop's else clause only runs if the loop finishes WITHOUT hitting break — since break fires at i==4, 'done' never prints." },
+
+  // Functions & Range (extra)
+  { topic: "Functions & Range", difficulty: "easy", code: `def square(x):
+    return x * x
+
+print(square(4))
+print(square(-3))`, answer: "16\n9", explain: "Straightforward function call and return — squaring works the same for negative numbers since the sign cancels out." },
+  { topic: "Functions & Range", difficulty: "hard", code: `def f(a, b, *, c):
+    return a + b + c
+
+print(f(1, 2, c=3))`, answer: "6", explain: "The bare * forces everything after it to be keyword-only — c=3 must be passed by name; f(1, 2, 3) would raise an error." },
+
+  // Iterators & Modules (extra)
+  { topic: "Iterators & Modules", difficulty: "easy", code: `import math
+print(math.pi)
+print(math.pow(2, 3))`, answer: "3.141592653589793\n8.0", explain: "math.pi is a constant. math.pow always returns a float, unlike ** which returns an int for int inputs." },
+  { topic: "Iterators & Modules", difficulty: "hard", code: `nums = [3, 1, 4, 1, 5]
+print(sorted(nums, reverse=True))
+print(max(nums), min(nums))
+print(sum(nums))`, answer: "[5, 4, 3, 1, 1]\n5 1\n14", explain: "sorted() returns a new sorted list without changing the original (unlike .sort()). reverse=True flips ascending to descending." },
+
+  // String Formatting (extra)
+  { topic: "String Formatting", difficulty: "easy", code: `name = "Sully"
+print(f"Hi {name}")`, answer: "Hi Sully", explain: "Basic f-string substitution — the value inside {} is inserted directly into the string." },
+  { topic: "String Formatting", difficulty: "hard", code: `value = 3
+print(f"{value:05d}")
+print(f"{3.14159:.2f}")
+print(f"{1000000:,}")`, answer: "00003\n3.14\n1,000,000", explain: "05d pads with zeros to width 5. .2f rounds to 2 decimals. The comma adds thousands separators — all format specifiers go after the colon inside {}." },
+
+  // None & Regex (extra)
+  { topic: "None & Regex", difficulty: "easy", code: `def f():
+    pass
+
+print(f())`, answer: "None", explain: "A function with no explicit return statement returns None automatically." },
+  { topic: "None & Regex", difficulty: "hard", code: `import re
+result = re.findall(r"\\w+@\\w+\\.\\w+", "contact: a@b.com or c@d.com")
+print(result)`, answer: "['a@b.com', 'c@d.com']", explain: "findall returns every non-overlapping match as a list, unlike search which only returns the first. This pattern loosely matches simple email addresses." },
+
+  // Match & Dates (extra)
+  { topic: "Match & Dates", difficulty: "easy", code: `x = 3
+match x:
+    case 1 | 2:
+        print("one or two")
+    case 3 | 4:
+        print("three or four")`, answer: "three or four", explain: "The | inside a case lets one case match multiple values, like an 'or' condition." },
+  { topic: "Match & Dates", difficulty: "hard", code: `from datetime import date, timedelta
+
+d1 = date(2026, 8, 1)
+d2 = d1 + timedelta(days=10)
+print(d2)
+print((d2 - d1).days)`, answer: "2026-08-11\n10", explain: "timedelta lets you add/subtract durations from dates. Subtracting two dates gives a timedelta object; .days extracts the number of days as an int." },
+
+  // OOP Deep Dive (extra)
+  { topic: "OOP Deep Dive", difficulty: "easy", code: `class Animal:
+    def __init__(self, name):
+        self.name = name
+
+a = Animal("Rex")
+print(isinstance(a, Animal))
+print(isinstance(a, str))`, answer: "True\nFalse", explain: "isinstance() checks if an object belongs to a class (or its subclasses) — straightforward type checking." },
+  { topic: "OOP Deep Dive", difficulty: "hard", code: `class Base:
+    def greet(self):
+        return self.name_method()
+    def name_method(self):
+        return "Base"
+
+class Child(Base):
+    def name_method(self):
+        return "Child"
+
+c = Child()
+print(c.greet())`, answer: "Child", explain: "Even though greet() is only defined on Base, it calls self.name_method() — and self is a Child instance, so Python uses Child's override, not Base's. This is how polymorphism works through inheritance." },
+];
+
+const TOPIC_ORDER = [...new Set(QUESTIONS.map(q => q.topic))];
+const STORAGE_KEY = "python_drill_progress_v2";
+const TIMER_SECONDS = 90;
+const READY_ACCURACY = 95; // percent
+const READY_MIN_QUESTIONS = 60; // minimum reps before trusting the overall accuracy number
+const READY_MIN_PER_TOPIC = 20; // target reps per topic before it counts as covered
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function defaultDay() {
+  return { score: 0, answered: 0, correct: 0, streak: 0 };
+}
+
+function defaultState() {
+  // topicStats and lifetime stats persist forever; days holds one entry per date
+  return {
+    lifetimeScore: 0,
+    bestStreak: 0,
+    totalAnswered: 0,
+    totalCorrect: 0,
+    topicStats: {},
+    badges: [],
+    days: {},
+    readyNotified: false,
+    seenByTopic: {}
+  };
+}
+
+let state = defaultState();
+let current = null;
+let phase = "idle"; // idle, answering, revealed (not yet graded), graded
+let timeLeft = TIMER_SECONDS;
+let timerHandle = null;
+let flash = null;
+
+function ensureToday() {
+  const key = todayKey();
+  if (!state.days[key]) state.days[key] = defaultDay();
+  return state.days[key];
+}
+
+async function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) { console.error("save failed", e); }
+}
+
+async function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) state = JSON.parse(raw);
+  } catch (e) { /* nothing saved yet */ }
+  if (!state.seenByTopic) state.seenByTopic = {}; // backward compatibility with older saves
+  ensureToday();
+  render();
+}
+
+function pickQuestion() {
+  // Rank topics: anything still under the min-rep bar is highest priority
+  // (guarantees you see the full range of questions in a topic before it
+  // starts repeating), then weight by how weak your accuracy is.
+  const topicWeight = {};
+  TOPIC_ORDER.forEach(topic => {
+    const s = state.topicStats[topic];
+    const attempts = s ? s.attempts : 0;
+    const acc = s && attempts > 0 ? s.correct / attempts : 0.5;
+    if (attempts < READY_MIN_PER_TOPIC) topicWeight[topic] = 4;
+    else if (acc < 0.6) topicWeight[topic] = 3;
+    else if (acc < 0.85) topicWeight[topic] = 2;
+    else topicWeight[topic] = 1;
+  });
+
+  const weightedTopics = [];
+  TOPIC_ORDER.forEach(topic => {
+    for (let i = 0; i < topicWeight[topic]; i++) weightedTopics.push(topic);
+  });
+  const chosenTopic = weightedTopics[Math.floor(Math.random() * weightedTopics.length)];
+
+  // Within the chosen topic, prefer a question not yet seen this cycle —
+  // so you work through the full easy-to-hard range before anything repeats.
+  const topicQuestions = QUESTIONS
+    .map((q, idx) => ({ ...q, idx }))
+    .filter(q => q.topic === chosenTopic);
+
+  if (!state.seenByTopic) state.seenByTopic = {};
+  let seen = state.seenByTopic[chosenTopic] || [];
+  let unseen = topicQuestions.filter(q => !seen.includes(q.idx));
+
+  if (unseen.length === 0) {
+    // Cycled through every question in this topic — reset and start a fresh lap.
+    seen = [];
+    unseen = topicQuestions;
+  }
+
+  const picked = unseen[Math.floor(Math.random() * unseen.length)];
+  state.seenByTopic[chosenTopic] = [...seen, picked.idx];
+
+  return { ...picked };
+}
+
+function startQuestion() {
+  current = pickQuestion();
+  phase = "answering";
+  timeLeft = TIMER_SECONDS;
+  flash = null;
+  clearTimeout(timerHandle);
+  tick();
+  render();
+}
+
+function tick() {
+  timerHandle = setTimeout(() => {
+    if (phase !== "answering") return;
+    timeLeft -= 1;
+    if (timeLeft <= 0) {
+      phase = "revealed";
+      render();
+      return;
+    }
+    render();
+    tick();
+  }, 1000);
+}
+
+// Called when the timer runs out or the user clicks "Reveal answer" —
+// just shows the answer, doesn't grade anything yet.
+function revealAnswer() {
+  clearTimeout(timerHandle);
+  phase = "revealed";
+  render();
+}
+
+// Called after reveal, once the user says whether they actually got it right.
+function grade(correct) {
+  const today = ensureToday();
+  const topic = current.topic;
+  const ts = state.topicStats[topic] || { attempts: 0, correct: 0 };
+  state.topicStats[topic] = { attempts: ts.attempts + 1, correct: ts.correct + (correct ? 1 : 0) };
+
+  today.streak = correct ? today.streak + 1 : 0;
+  state.bestStreak = Math.max(state.bestStreak, today.streak);
+  today.answered += 1;
+  today.correct += correct ? 1 : 0;
+  state.totalAnswered += 1;
+  state.totalCorrect += correct ? 1 : 0;
+
+  const earned = correct ? 10 : 0;
+  today.score += earned;
+  state.lifetimeScore += earned;
+
+  if (today.streak === 5 && !state.badges.includes("Trap Dodger")) state.badges.push("Trap Dodger");
+  if (today.streak === 10 && !state.badges.includes("No Mercy")) state.badges.push("No Mercy");
+
+  flash = correct ? `+${earned}` : "+0";
+  phase = "graded";
+
+  const justBecameReady = isReady() && !state.readyNotified;
+  if (justBecameReady) state.readyNotified = true;
+
+  saveState();
+  render();
+
+  if (justBecameReady) {
+    setTimeout(() => {
+      alert(`🎉 Every topic is at ${READY_ACCURACY}%+ with at least ${READY_MIN_PER_TOPIC} reps, and your overall accuracy is ${Math.round(overallAccuracy())}% across ${state.totalAnswered} questions. That's a real readiness signal — you're in good shape to sit the Outlier Python assessment.`);
+    }, 100);
+  }
+}
+
+// Resets only today's counters (score, streak, answered/correct for today).
+// Topic mastery, lifetime score, and badges are untouched.
+async function resetToday() {
+  state.days[todayKey()] = defaultDay();
+  current = null;
+  phase = "idle";
+  await saveState();
+  render();
+}
+
+function masteryFor(topic) {
+  const s = state.topicStats[topic];
+  if (!s || s.attempts === 0) return { label: "Not started", pct: 0, color: "#94a3b8" };
+  const pct = s.correct / s.attempts;
+  if (pct < 0.6) return { label: "Shaky", pct, color: "#ef4444" };
+  if (pct < 0.85) return { label: "Getting there", pct, color: "#eab308" };
+  return { label: "Locked in", pct, color: "#22c55e" };
+}
+
+function overallAccuracy() {
+  return state.totalAnswered > 0 ? (state.totalCorrect / state.totalAnswered) * 100 : 0;
+}
+
+function topicsBelowBar() {
+  return TOPIC_ORDER.filter(t => {
+    const s = state.topicStats[t];
+    if (!s || s.attempts < READY_MIN_PER_TOPIC) return true; // not enough reps yet
+    return (s.correct / s.attempts) * 100 < READY_ACCURACY;
+  });
+}
+
+function isReady() {
+  const overallOk = state.totalAnswered >= READY_MIN_QUESTIONS && overallAccuracy() >= READY_ACCURACY;
+  return overallOk && topicsBelowBar().length === 0;
+}
+
+function weakestTopics() {
+  return topicsBelowBar();
+}
+
+function esc(str) {
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const today = ensureToday();
+  const lifetimeAccuracy = state.totalAnswered > 0 ? Math.round((state.totalCorrect / state.totalAnswered) * 100) : 0;
+  const todayAccuracy = today.answered > 0 ? Math.round((today.correct / today.answered) * 100) : 0;
+
+  let questionHtml = "";
+  if (phase === "idle") {
+    questionHtml = `
+      <div style="text-align:center; padding:20px 0;">
+        <div style="font-size:16px; margin-bottom:16px; opacity:0.75;">Ready for a timed drill? 90 seconds, no hints until reveal.</div>
+        <button id="startBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:#2563eb;color:white;">Start Drill</button>
+      </div>`;
+  } else if (current) {
+    questionHtml = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span>
+          <span style="font-size:13px;font-weight:600;color:#cbd5e1;background:#334155;padding:3px 10px;border-radius:999px;">${esc(current.topic)}</span>
+          ${current.difficulty ? `<span style="font-size:12px;font-weight:600;color:${current.difficulty === "easy" ? "#86efac" : current.difficulty === "hard" ? "#fca5a5" : "#fde68a"};margin-left:6px;">${esc(current.difficulty)}</span>` : ""}
+        </span>
+        ${phase === "answering" ? `<span style="font-size:18px;font-weight:700;color:${timeLeft <= 15 ? "#ef4444" : "#334155"};">${timeLeft}s</span>` : ""}
+      </div>
+      <pre style="background:#020617;color:#e2e8f0;padding:16px;border-radius:8px;overflow-x:auto;font-size:14px;line-height:1.5;border:1px solid #1e293b;">${esc(current.code)}</pre>
+      ${phase === "answering" ? `
+        <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+          <button id="revealBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:#2563eb;color:white;">Reveal answer</button>
+        </div>
+        <div style="margin-top:8px;font-size:12px;opacity:0.5;">Work it out first, then reveal and grade yourself honestly.</div>` : ""}
+      ${(phase === "revealed" || phase === "graded") ? `
+        <div style="margin-top:16px;">
+          <div style="font-size:13px;font-weight:600;opacity:0.6;margin-bottom:4px;">OUTPUT</div>
+          <pre style="background:#052e1c;border:1px solid #166534;color:#bbf7d0;padding:12px;border-radius:8px;font-size:14px;white-space:pre-wrap;">${esc(current.answer)}</pre>
+          <div style="font-size:13px;font-weight:600;opacity:0.6;margin-top:12px;margin-bottom:4px;">WHY</div>
+          <div style="font-size:14px;line-height:1.5;opacity:0.85;color:#cbd5e1;">${esc(current.explain)}</div>
+        </div>` : ""}
+      ${phase === "revealed" ? `
+        <div style="margin-top:16px;">
+          <div style="font-size:13px;font-weight:600;opacity:0.7;margin-bottom:8px;">Did you actually get it right?</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button id="markRightBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:#22c55e;color:white;">✓ I got it right</button>
+            <button id="markWrongBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:#ef4444;color:white;">✗ I got it wrong</button>
+          </div>
+        </div>` : ""}
+      ${phase === "graded" ? `
+        <div style="margin-top:16px;">
+          ${flash ? `<div style="font-size:22px;font-weight:700;color:${flash === "+0" ? "#94a3b8" : "#22c55e"};margin-bottom:8px;">${flash}</div>` : ""}
+          <button id="nextBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;background:#2563eb;color:white;">Next Question</button>
+        </div>` : ""}
+    `;
+  }
+
+  const badgesHtml = state.badges.length > 0 ? `
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+      ${state.badges.map(b => `<span style="background:#422006;color:#fcd34d;padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600;">🏅 ${esc(b)}</span>`).join("")}
+    </div>` : "";
+
+  const ready = isReady();
+  const overallAcc = Math.round(overallAccuracy());
+  const weak = weakestTopics();
+  const readyBannerHtml = ready ? `
+    <div style="background:#052e1c;border:1px solid #166534;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
+      <div style="font-size:15px;font-weight:700;color:#86efac;">🎉 Ready to sit the test — ${overallAcc}% overall, every topic at ${READY_ACCURACY}%+ with ${READY_MIN_PER_TOPIC}+ reps</div>
+      <div style="font-size:13px;color:#86efac;opacity:0.85;margin-top:2px;">No topic left behind — this is a real signal, not just a lucky average.</div>
+    </div>` : `
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px 20px;margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;color:#94a3b8;">
+        <span>Readiness goal: ${READY_ACCURACY}% overall (min ${READY_MIN_QUESTIONS}q) AND every topic ${READY_ACCURACY}%+ with ${READY_MIN_PER_TOPIC}+ reps</span>
+        <span>${overallAcc}% overall</span>
+      </div>
+      <div style="height:6px;background:#334155;border-radius:999px;overflow:hidden;margin-top:8px;">
+        <div style="height:100%;width:${Math.min(100, (overallAcc / READY_ACCURACY) * 100)}%;background:#3b82f6;transition:width 0.3s;"></div>
+      </div>
+      ${weak.length > 0 ? `<div style="font-size:12px;color:#94a3b8;margin-top:8px;">Still below the bar (needs more reps or higher accuracy): ${weak.map(esc).join(", ")}</div>` : `<div style="font-size:12px;color:#94a3b8;margin-top:8px;">All topics clear — just need ${Math.max(0, READY_MIN_QUESTIONS - state.totalAnswered)} more questions overall.</div>`}
+    </div>`;
+
+  const masteryHtml = TOPIC_ORDER.map(topic => {
+    const m = masteryFor(topic);
+    const s = state.topicStats[topic];
+    return `
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;">
+          <span>${esc(topic)}</span>
+          <span style="color:${m.color};font-weight:600;">${m.label}${s ? ` (${s.correct}/${s.attempts})` : ""}</span>
+        </div>
+        <div style="height:6px;background:#334155;border-radius:999px;overflow:hidden;">
+          <div style="height:100%;width:${m.pct * 100}%;background:${m.color};transition:width 0.3s;"></div>
+        </div>
+      </div>`;
+  }).join("");
+
+  app.innerHTML = `
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px;opacity:0.6;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Python Drill Game</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px;">
+        <div>
+          <div style="font-size:11px;opacity:0.5;text-transform:uppercase;">Today</div>
+          <div style="font-size:26px;font-weight:700;">${today.score} pts</div>
+          <div style="font-size:12px;opacity:0.6;">${today.correct}/${today.answered} correct · ${todayAccuracy}% · streak ${today.streak}🔥</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;opacity:0.5;text-transform:uppercase;">All-time</div>
+          <div style="font-size:18px;font-weight:700;">${state.lifetimeScore} pts</div>
+          <div style="font-size:12px;opacity:0.6;">${state.totalCorrect}/${state.totalAnswered} · ${lifetimeAccuracy}% · best streak ${state.bestStreak}</div>
+        </div>
+      </div>
+    </div>
+    ${badgesHtml}
+    ${readyBannerHtml}
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin-bottom:20px;">
+      ${questionHtml}
+    </div>
+    <div style="margin-bottom:12px;font-size:14px;font-weight:700;opacity:0.7;color:#e2e8f0;">TOPIC MASTERY (all-time)</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px;color:#e2e8f0;">
+      ${masteryHtml}
+    </div>
+    <button id="resetTodayBtn" style="border:none;border-radius:8px;padding:10px 18px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;color:#94a3b8;border:1px solid #475569;opacity:0.8;">Reset today's session (keeps all-time stats &amp; mastery)</button>
+  `;
+
+  const startBtn = document.getElementById("startBtn");
+  if (startBtn) startBtn.onclick = startQuestion;
+  const revealBtn = document.getElementById("revealBtn");
+  if (revealBtn) revealBtn.onclick = revealAnswer;
+  const markRightBtn = document.getElementById("markRightBtn");
+  if (markRightBtn) markRightBtn.onclick = () => grade(true);
+  const markWrongBtn = document.getElementById("markWrongBtn");
+  if (markWrongBtn) markWrongBtn.onclick = () => grade(false);
+  const nextBtn = document.getElementById("nextBtn");
+  if (nextBtn) nextBtn.onclick = startQuestion;
+  const resetTodayBtn = document.getElementById("resetTodayBtn");
+  if (resetTodayBtn) resetTodayBtn.onclick = resetToday;
+}
+
+loadState();
+</script>
