@@ -40,3 +40,6 @@ open index.html
 ## Deployment
 
 Currently deployed as a static site via Netlify. Any static host (GitHub Pages, Vercel, Netlify) works identically since there's no server side component.
+
+## fyi 
+As long as you're on the same browser, on the same device, a normal refresh won't touch your stats so you can track your progress over time 👍🏽😌
